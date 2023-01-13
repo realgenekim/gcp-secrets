@@ -60,16 +60,8 @@
   (pp/print-table (r/reflect client))
 
 
-  ;(def project (ProjectName/of "booktracker-1208"))
   ;(.accessSecretVersion client "mysql")
-
   ; https://cloud.google.com/secret-manager/docs/samples/secretmanager-access-secret-version#secretmanager_access_secret_version-java
-  (def client (SecretManagerServiceClient/create))
-  (def sv (SecretVersionName/of "booktracker-1208" "mysql" "latest"))
-  (bean sv)
-  (def response (.accessSecretVersion client sv))
-  response
-  (bean response)
 
   ; OMG.  works in clj, but fails in repl!
   ; because of classpath issue: don't use IntelliJ classpath!!!

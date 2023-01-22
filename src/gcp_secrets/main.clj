@@ -2,12 +2,16 @@
   (:require
     [clojure.reflect :as r]
     [clojure.pprint :as pp]
+    [logging.main :as glog]
     [taoensso.timbre :as log])
   (:import (com.google.cloud.secretmanager.v1 Secret
                                               SecretManagerServiceClient
                                               ProjectName
                                               SecretVersionName
-                                              AccessSecretVersionResponse)))
+                                              AccessSecretVersionResponse)
+           (org.apache.log4j Logger Level)))
+
+(glog/configure-logging! glog/config)
 
 (defn use-local-keys?
   " returns non-nil if USE_LOCAL_KEYFILES environment var is set "
@@ -17,7 +21,7 @@
     ret))
 
 (comment
-  (gcpsec/use-local-keys?)
+  (use-local-keys?)
   0)
 
 ; enable API
@@ -45,6 +49,11 @@
   0)
 
 (comment
+  (.setLevel (Logger/getLogger "io.grpc.netty.shaded.io.netty.util.internal.PlatformDependent" Level/OFF))
+
+  0)
+
+(comment
   (init)
 
   ; Secret secret =
@@ -60,8 +69,16 @@
   (pp/print-table (r/reflect client))
 
 
+  ;(def project (ProjectName/of "booktracker-1208"))
   ;(.accessSecretVersion client "mysql")
+
   ; https://cloud.google.com/secret-manager/docs/samples/secretmanager-access-secret-version#secretmanager_access_secret_version-java
+  (def client (SecretManagerServiceClient/create))
+  (def sv (SecretVersionName/of "booktracker-1208" "mysql" "latest"))
+  (bean sv)
+  (def response (.accessSecretVersion client sv))
+  response
+  (bean response)
 
   ; OMG.  works in clj, but fails in repl!
   ; because of classpath issue: don't use IntelliJ classpath!!!

@@ -1,6 +1,6 @@
 {:paths ["src"]
  :deps
- {com.google.cloud/google-cloud-secretmanager {:mvn/version "2.8.0"}
+ {com.google.cloud/google-cloud-secretmanager {:mvn/version "2.56.0"}
   ;genek/logging                               {:local/root "../logging"}
   com.taoensso/timbre                         {:mvn/version "5.0.0"}
 

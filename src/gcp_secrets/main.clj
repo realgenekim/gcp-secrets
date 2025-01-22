@@ -47,6 +47,7 @@
   (get-secret! "mysql")
   (get-secret! "rainforest")
   (get-secret! "mysql-booktracker")
+  (get-secret! "mongodb")
   ; 500ms
   (time (get-secret! "mysql-booktracker"))
   0)
@@ -124,7 +125,8 @@
                    {:headers {"Authorization" (str "Bearer " token)}
                     :as :json})
         payload (-> response :body
-                  (json/read-str :key-fn keyword)
+                  ; not needed: :as :json coerces
+                  ;(json/read-str :key-fn keyword)
                   :payload
                   :data
                   base64-decode

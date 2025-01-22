@@ -97,13 +97,24 @@
 
   0)
 
-(defn get-auth-token []
+(defn get-auth-token-shell []
   (-> (clojure.java.shell/sh "gcloud" "auth" "print-access-token")
     :out
     clojure.string/trim))
 
 (comment
-  (get-auth-token)
+  (get-auth-token-shell)
+  0)
+
+(defn get-access-token-gcloud-net []
+  (-> (http/get "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token"
+        {:headers {"Metadata-Flavor" "Google"}})
+    :body
+    (json/read-str :key-fn keyword)
+    :access_token))
+
+(comment
+  (get-access-token-gcloud-net)
   0)
 
 ; 'https://secretmanager.googleapis.com/v1/projects/YOUR_PROJECT_ID/secrets/YOUR_SECRET_NAME' \
@@ -113,6 +124,17 @@
 (defn base64-decode [s]
   (.decode (java.util.Base64/getDecoder) s))
 
+(defn get-token []
+  (try
+    (get-auth-token-shell)
+    (catch Exception shell-ex
+      (try
+        (get-access-token-gcloud-net)
+        (catch Exception net-ex
+          (throw (ex-info "Failed to get token via shell and network"
+                   {:shell-error (.getMessage shell-ex)
+                    :net-error (.getMessage net-ex)})))))))
+
 (defn get-secret-http!
   "Fetches secret using Google Cloud Secret Manager REST API
    Returns parsed EDN payload from secret"
@@ -121,13 +143,14 @@
         url (format "https://secretmanager.googleapis.com/v1/projects/%s/secrets/%s/versions/latest:access"
               project-id
               secret-name)
-        token (get-auth-token)
+        token (get-token)
         response (http/get url
                    {:headers {"Authorization" (str "Bearer " token)}
                     :as :json})
-        payload (-> response :body
-                  ; not needed: :as :json coerces
-                  ;(json/read-str :key-fn keyword)
+        body-parsed (if (map? (:body response))
+                      (:body response)
+                      (json/read-str (:body response) :key-fn keyword))
+        payload (-> body-parsed
                   :payload
                   :data
                   base64-decode
@@ -136,9 +159,11 @@
     (log/warn ::get-secret! :secret-name secret-name)
     payload))
 
+
 (def get-secret! get-secret-http!)
 
 (comment
+  (get-token)
   (def retval
     (get-secret-http! "mysql"))
 

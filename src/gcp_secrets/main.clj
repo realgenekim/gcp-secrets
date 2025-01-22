@@ -1,6 +1,7 @@
 (ns gcp-secrets.main
   (:require
     [clojure.edn :as edn]
+    [clojure.java.shell :as shell]
     [clojure.reflect :as r]
     [clojure.pprint :as pp]
     [clojure.data.json :as json]

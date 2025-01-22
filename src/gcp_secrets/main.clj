@@ -1,8 +1,11 @@
 (ns gcp-secrets.main
   (:require
+    [clojure.edn :as edn]
     [clojure.reflect :as r]
     [clojure.pprint :as pp]
+    [clojure.data.json :as json]
     [logging.main :as glog]
+    [hato.client :as http]
     [taoensso.timbre :as log])
   (:import (com.google.cloud.secretmanager.v1 Secret
                                               SecretManagerServiceClient
@@ -89,5 +92,56 @@
   ; https://github.com/googleapis/java-secretmanager/blob/main/samples/snippets/src/main/java/secretmanager/AccessSecretVersion.java
   ;  String payload = response.getPayload().getData().toStringUtf8();
   (-> response .getPayload .getData .toStringUtf8 read-string)
+
+  0)
+
+(defn get-auth-token []
+  (-> (clojure.java.shell/sh "gcloud" "auth" "print-access-token")
+    :out
+    clojure.string/trim))
+
+(comment
+  (get-auth-token)
+  0)
+
+; 'https://secretmanager.googleapis.com/v1/projects/YOUR_PROJECT_ID/secrets/YOUR_SECRET_NAME' \
+;  -H 'Authorization: Bearer YOUR_ACCESS_TOKEN'
+;
+;
+(defn base64-decode [s]
+  (.decode (java.util.Base64/getDecoder) s))
+
+(defn get-secret-http!
+  "Fetches secret using Google Cloud Secret Manager REST API
+   Returns parsed EDN payload from secret"
+  [secret-name]
+  (let [project-id "booktracker-1208"
+        url (format "https://secretmanager.googleapis.com/v1/projects/%s/secrets/%s/versions/latest:access"
+              project-id
+              secret-name)
+        token (get-auth-token)
+        response (http/get url
+                   {:headers {"Authorization" (str "Bearer " token)}
+                    :as :json})
+        payload (-> response :body
+                  (json/read-str :key-fn keyword)
+                  :payload
+                  :data
+                  base64-decode
+                  (String. "UTF-8")
+                  edn/read-string)]
+    (log/warn ::get-secret! :secret-name secret-name)
+    payload))
+
+
+(comment
+  (def retval
+    (get-secret-http! "mysql"))
+
+
+  (get-secret! "mysql")
+  (get-secret! "rainforest")
+  (get-secret! "mysql-booktracker")
+
 
   0)

@@ -7,12 +7,12 @@
     [logging.main :as glog]
     [hato.client :as http]
     [taoensso.timbre :as log])
-  (:import (com.google.cloud.secretmanager.v1 Secret
-                                              SecretManagerServiceClient
-                                              ProjectName
-                                              SecretVersionName
-                                              AccessSecretVersionResponse)
-           (org.apache.log4j Logger Level)))
+  #_(:import (com.google.cloud.secretmanager.v1 Secret
+                                                SecretManagerServiceClient
+                                                ProjectName
+                                                SecretVersionName
+                                                AccessSecretVersionResponse)
+             (org.apache.log4j Logger Level)))
 
 (glog/configure-logging! glog/config)
 
@@ -30,18 +30,18 @@
 ; enable API
 ; https://console.cloud.google.com/apis/enableflow?apiid=cloudbuild.googleapis.com,secretmanager.googleapis.com&redirect=https:%2F%2Fcloud.google.com%2Fbuild%2Fdocs%2Fsecuring-builds%2Fuse-secrets&_ga=2.167458494.1413660334.1663728888-1943839537.1657917961&project=booktracker-1208
 
-(defn get-secret!
-  " input: nothing
+#_(defn get-secret!
+    " input: nothing
     output: map of returned secret (parsed from edn string) "
-  [secret-name]
-  (let [client (SecretManagerServiceClient/create)
-        sv     (SecretVersionName/of "booktracker-1208" secret-name "latest")
-        response (.accessSecretVersion client sv)
-        payload (-> response .getPayload .getData .toStringUtf8 read-string)]
-    (log/warn ::get-secret! :secret-name secret-name)
-    ;(log/warn ::get-secret! :dbname (-> payload :dbname))
-    (.close client)
-    payload))
+    [secret-name]
+    (let [client (SecretManagerServiceClient/create)
+          sv     (SecretVersionName/of "booktracker-1208" secret-name "latest")
+          response (.accessSecretVersion client sv)
+          payload (-> response .getPayload .getData .toStringUtf8 read-string)]
+      (log/warn ::get-secret! :secret-name secret-name)
+      ;(log/warn ::get-secret! :dbname (-> payload :dbname))
+      (.close client)
+      payload))
 
 (comment
   (get-secret! "mysql")
@@ -133,6 +133,7 @@
     (log/warn ::get-secret! :secret-name secret-name)
     payload))
 
+(def get-secret! get-secret-http!)
 
 (comment
   (def retval

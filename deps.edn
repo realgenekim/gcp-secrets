@@ -1,7 +1,7 @@
 {:paths ["src"]
  :deps
  {
-  com.google.cloud/google-cloud-secretmanager {:mvn/version "2.33.0"}
+  ;com.google.cloud/google-cloud-secretmanager {:mvn/version "2.33.0"}
 
   ; this causes verifier issues
   ;     https://github.com/googleapis/google-cloud-java/issues/11373

@@ -1,13 +1,21 @@
 {:paths ["src"]
  :deps
  {
-  com.google.cloud/google-cloud-secretmanager {:mvn/version "2.33.0"}
+  ;com.google.cloud/google-cloud-secretmanager {:mvn/version "2.33.0"}
+
+  ; this causes verifier issues
+  ;     https://github.com/googleapis/google-cloud-java/issues/11373
+  ;     https://www.perplexity.ai/search/execution-error-verifyerror-at-X5TSkTHgR0SQR1RSqm5McA
   ;com.google.cloud/google-cloud-secretmanager {:mvn/version "2.56.0"}
+
+  ;com.google.cloud/google-cloud-secretmanager {:mvn/version "2.8.0"}
   ; causes incompatible versions
   ;   You are currently running with version 2.1.2 of google-api-client. You need at least version 1.31.1 of google-api-client to run version 1.32.1 of the Cloud Storage JSON API library.
-  ;com.google.cloud/google-cloud-secretmanager {:mvn/version "2.8.0"}
   ;genek/logging                               {:local/root "../logging"}
   com.taoensso/timbre                         {:mvn/version "5.0.0"}
+
+  org.clojure/data.json       {:mvn/version "2.4.0"}
+  hato/hato {:mvn/version "1.0.0"}
 
   ;; Unified logging for server
   org.slf4j/log4j-over-slf4j {:mvn/version "1.7.30"} ; auto sends log4j to slf4j

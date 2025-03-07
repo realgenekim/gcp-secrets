@@ -1,15 +1,19 @@
 (ns gcp-secrets.main
   (:require
+    [clojure.edn :as edn]
+    [clojure.java.shell :as shell]
     [clojure.reflect :as r]
     [clojure.pprint :as pp]
+    [clojure.data.json :as json]
     [logging.main :as glog]
+    [hato.client :as http]
     [taoensso.timbre :as log])
-  (:import (com.google.cloud.secretmanager.v1 Secret
-                                              SecretManagerServiceClient
-                                              ProjectName
-                                              SecretVersionName
-                                              AccessSecretVersionResponse)
-           (org.apache.log4j Logger Level)))
+  #_(:import (com.google.cloud.secretmanager.v1 Secret
+                                                SecretManagerServiceClient
+                                                ProjectName
+                                                SecretVersionName
+                                                AccessSecretVersionResponse)
+             (org.apache.log4j Logger Level)))
 
 (glog/configure-logging! glog/config)
 
@@ -27,23 +31,24 @@
 ; enable API
 ; https://console.cloud.google.com/apis/enableflow?apiid=cloudbuild.googleapis.com,secretmanager.googleapis.com&redirect=https:%2F%2Fcloud.google.com%2Fbuild%2Fdocs%2Fsecuring-builds%2Fuse-secrets&_ga=2.167458494.1413660334.1663728888-1943839537.1657917961&project=booktracker-1208
 
-(defn get-secret!
-  " input: nothing
+#_(defn get-secret!
+    " input: nothing
     output: map of returned secret (parsed from edn string) "
-  [secret-name]
-  (let [client (SecretManagerServiceClient/create)
-        sv     (SecretVersionName/of "booktracker-1208" secret-name "latest")
-        response (.accessSecretVersion client sv)
-        payload (-> response .getPayload .getData .toStringUtf8 read-string)]
-    (log/warn ::get-secret! :secret-name secret-name)
-    ;(log/warn ::get-secret! :dbname (-> payload :dbname))
-    (.close client)
-    payload))
+    [secret-name]
+    (let [client (SecretManagerServiceClient/create)
+          sv     (SecretVersionName/of "booktracker-1208" secret-name "latest")
+          response (.accessSecretVersion client sv)
+          payload (-> response .getPayload .getData .toStringUtf8 read-string)]
+      (log/warn ::get-secret! :secret-name secret-name)
+      ;(log/warn ::get-secret! :dbname (-> payload :dbname))
+      (.close client)
+      payload))
 
 (comment
   (get-secret! "mysql")
   (get-secret! "rainforest")
   (get-secret! "mysql-booktracker")
+  (get-secret! "mongodb")
   ; 500ms
   (time (get-secret! "mysql-booktracker"))
   0)
@@ -89,5 +94,84 @@
   ; https://github.com/googleapis/java-secretmanager/blob/main/samples/snippets/src/main/java/secretmanager/AccessSecretVersion.java
   ;  String payload = response.getPayload().getData().toStringUtf8();
   (-> response .getPayload .getData .toStringUtf8 read-string)
+
+  0)
+
+(defn get-auth-token-shell []
+  (-> (clojure.java.shell/sh "gcloud" "auth" "print-access-token")
+    :out
+    clojure.string/trim))
+
+(comment
+  (get-auth-token-shell)
+  0)
+
+; https://cloud.google.com/compute/docs/access/authenticate-workloads
+(defn get-access-token-gcloud-net []
+  (-> (http/get "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token"
+        {:headers {"Metadata-Flavor" "Google"}})
+    :body
+    (json/read-str :key-fn keyword)
+    :access_token))
+
+(comment
+  (get-access-token-gcloud-net)
+  0)
+
+; 'https://secretmanager.googleapis.com/v1/projects/YOUR_PROJECT_ID/secrets/YOUR_SECRET_NAME' \
+;  -H 'Authorization: Bearer YOUR_ACCESS_TOKEN'
+;
+;
+(defn base64-decode [s]
+  (.decode (java.util.Base64/getDecoder) s))
+
+(defn get-token []
+  (try
+    (get-auth-token-shell)
+    (catch Exception shell-ex
+      (try
+        (get-access-token-gcloud-net)
+        (catch Exception net-ex
+          (throw (ex-info "Failed to get token via shell and network"
+                   {:shell-error (.getMessage shell-ex)
+                    :net-error (.getMessage net-ex)})))))))
+
+(defn get-secret-http!
+  "Fetches secret using Google Cloud Secret Manager REST API
+   Returns parsed EDN payload from secret"
+  [secret-name]
+  (let [project-id "booktracker-1208"
+        url (format "https://secretmanager.googleapis.com/v1/projects/%s/secrets/%s/versions/latest:access"
+              project-id
+              secret-name)
+        token (get-token)
+        response (http/get url
+                   {:headers {"Authorization" (str "Bearer " token)}
+                    :as :json})
+        body-parsed (if (map? (:body response))
+                      (:body response)
+                      (json/read-str (:body response) :key-fn keyword))
+        payload (-> body-parsed
+                  :payload
+                  :data
+                  base64-decode
+                  (String. "UTF-8")
+                  edn/read-string)]
+    (log/warn ::get-secret! :secret-name secret-name)
+    payload))
+
+
+(def get-secret! get-secret-http!)
+
+(comment
+  (get-token)
+  (def retval
+    (get-secret-http! "mysql"))
+
+
+  (get-secret! "mysql")
+  (get-secret! "rainforest")
+  (get-secret! "mysql-booktracker")
+
 
   0)

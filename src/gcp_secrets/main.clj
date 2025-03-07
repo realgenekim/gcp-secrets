@@ -106,6 +106,7 @@
   (get-auth-token-shell)
   0)
 
+; https://cloud.google.com/compute/docs/access/authenticate-workloads
 (defn get-access-token-gcloud-net []
   (-> (http/get "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token"
         {:headers {"Metadata-Flavor" "Google"}})

@@ -160,15 +160,64 @@
     (log/warn ::get-secret! :secret-name secret-name)
     payload))
 
+(defn get-secret-gcloud!
+  "Fetches secret using gcloud CLI command
+   Returns parsed EDN payload from secret"
+  [secret-name]
+  (log/info ::get-secret-gcloud! :attempting secret-name :method "gcloud CLI")
+  (try
+    (let [result (shell/sh "gcloud" "secrets" "versions" "access" "latest" 
+                          (str "--secret=" secret-name))
+          {:keys [exit out err]} result]
+      (if (zero? exit)
+        (do
+          (log/info ::get-secret-gcloud! :success secret-name :method "gcloud CLI")
+          (edn/read-string out))
+        (do
+          (log/error ::get-secret-gcloud! :failed secret-name 
+                     :method "gcloud CLI" :exit exit :error err)
+          (throw (ex-info "gcloud command failed" 
+                   {:exit exit :error err :secret-name secret-name})))))
+    (catch Exception e
+      (log/error ::get-secret-gcloud! :exception secret-name 
+                 :method "gcloud CLI" :error (.getMessage e))
+      (throw e))))
 
-(def get-secret! get-secret-http!)
+(defn get-secret!
+  "Fetches secret with multiple fallback methods
+   1. Try HTTP/network method
+   2. Fallback to gcloud CLI
+   Returns parsed EDN payload from secret"
+  [secret-name]
+  (log/info ::get-secret! :attempting secret-name)
+  (try
+    (log/info ::get-secret! :trying-method "HTTP/network")
+    (get-secret-http! secret-name)
+    (catch Exception http-ex
+      (log/warn ::get-secret! :http-failed secret-name 
+                :error (.getMessage http-ex))
+      (try
+        (log/info ::get-secret! :trying-method "gcloud CLI fallback")
+        (get-secret-gcloud! secret-name)
+        (catch Exception gcloud-ex
+          (log/error ::get-secret! :all-methods-failed secret-name
+                     :http-error (.getMessage http-ex)
+                     :gcloud-error (.getMessage gcloud-ex))
+          (throw (ex-info "Failed to get secret via all methods"
+                   {:secret-name secret-name
+                    :http-error (.getMessage http-ex)
+                    :gcloud-error (.getMessage gcloud-ex)})))))))
 
 (comment
   (get-token)
   (def retval
     (get-secret-http! "mysql"))
 
-
+  ;; Test the new gcloud function
+  (get-secret-gcloud! "mysql")
+  (get-secret-gcloud! "reddit")
+  
+  ;; Test the fallback chain
   (get-secret! "mysql")
   (get-secret! "rainforest")
   (get-secret! "mysql-booktracker")

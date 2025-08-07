@@ -139,8 +139,8 @@
 (defn get-secret-http!
   "Fetches secret using Google Cloud Secret Manager REST API
    Returns parsed EDN payload from secret"
-  [secret-name]
-  (let [project-id "booktracker-1208"
+  [secret-name project-id]
+  (let [;project-id "booktracker-1208"
         url (format "https://secretmanager.googleapis.com/v1/projects/%s/secrets/%s/versions/latest:access"
               project-id
               secret-name)
@@ -183,30 +183,35 @@
                  :method "gcloud CLI" :error (.getMessage e))
       (throw e))))
 
+(def DEFAULT-PROJECT-ID "booktracker-1208")
+
 (defn get-secret!
   "Fetches secret with multiple fallback methods
    1. Try HTTP/network method
    2. Fallback to gcloud CLI
    Returns parsed EDN payload from secret"
-  [secret-name]
-  (log/info ::get-secret! :attempting secret-name)
-  (try
-    (log/info ::get-secret! :trying-method "HTTP/network")
-    (get-secret-http! secret-name)
-    (catch Exception http-ex
-      (log/warn ::get-secret! :http-failed secret-name 
-                :error (.getMessage http-ex))
-      (try
-        (log/info ::get-secret! :trying-method "gcloud CLI fallback")
-        (get-secret-gcloud! secret-name)
-        (catch Exception gcloud-ex
-          (log/error ::get-secret! :all-methods-failed secret-name
-                     :http-error (.getMessage http-ex)
-                     :gcloud-error (.getMessage gcloud-ex))
-          (throw (ex-info "Failed to get secret via all methods"
-                   {:secret-name secret-name
-                    :http-error (.getMessage http-ex)
-                    :gcloud-error (.getMessage gcloud-ex)})))))))
+  ([secret-name project-id]
+   (log/info ::get-secret! :attempting secret-name)
+   (try
+     (log/info ::get-secret! :trying-method "HTTP/network")
+     (get-secret-http! secret-name project-id)
+     (catch Exception http-ex
+       (log/warn ::get-secret! :http-failed secret-name
+         :error (.getMessage http-ex))
+       (try
+         (log/info ::get-secret! :trying-method "gcloud CLI fallback")
+         (get-secret-gcloud! secret-name)
+         (catch Exception gcloud-ex
+           (log/error ::get-secret! :all-methods-failed secret-name
+             :http-error (.getMessage http-ex)
+             :gcloud-error (.getMessage gcloud-ex))
+           (throw (ex-info "Failed to get secret via all methods"
+                    {:secret-name  secret-name
+                     :http-error   (.getMessage http-ex)
+                     :gcloud-error (.getMessage gcloud-ex)})))))))
+  ([secret-name]
+   (get-secret! secret-name DEFAULT-PROJECT-ID)))
+
 
 (comment
   (get-token)
@@ -221,6 +226,8 @@
   (get-secret! "mysql")
   (get-secret! "rainforest")
   (get-secret! "mysql-booktracker")
+  (get-secret! "podcaster" "podcaster")
+  (get-secret! "podcaster" "podcaster-468303")
 
 
   0)

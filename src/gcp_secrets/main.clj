@@ -191,7 +191,7 @@
    2. Fallback to gcloud CLI
    Returns parsed EDN payload from secret"
   ([secret-name project-id]
-   (log/info ::get-secret! :attempting secret-name)
+   (log/info ::get-secret! :attempting secret-name project-id)
    (try
      (log/info ::get-secret! :trying-method "HTTP/network")
      (get-secret-http! secret-name project-id)

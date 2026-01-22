@@ -151,16 +151,128 @@
 (defn base64-decode [s]
   (.decode (java.util.Base64/getDecoder) s))
 
-(defn get-token []
+;; ============================================================
+;; Application Default Credentials (ADC) Support
+;; ============================================================
+
+(defn get-adc-credentials-path
+  "Find the ADC credentials file. Checks:
+   1. GOOGLE_APPLICATION_CREDENTIALS env var
+   2. Default location: ~/.config/gcloud/application_default_credentials.json
+   Returns path string or nil if not found."
+  []
+  (let [env-path (System/getenv "GOOGLE_APPLICATION_CREDENTIALS")
+        default-path (str (System/getProperty "user.home")
+                          "/.config/gcloud/application_default_credentials.json")]
+    (cond
+      ;; Check env var first
+      (and env-path (.exists (java.io.File. env-path)))
+      (do
+        (log/info ::get-adc-credentials-path :found env-path :source "GOOGLE_APPLICATION_CREDENTIALS")
+        env-path)
+
+      ;; Check default location
+      (.exists (java.io.File. default-path))
+      (do
+        (log/info ::get-adc-credentials-path :found default-path :source "default-location")
+        default-path)
+
+      :else
+      (do
+        (log/debug ::get-adc-credentials-path :not-found)
+        nil))))
+
+(defn read-adc-credentials
+  "Read and parse ADC credentials from JSON file.
+   Returns map with :client_id, :client_secret, :refresh_token, :type, etc."
+  [path]
   (try
-    (get-auth-token-shell)
-    (catch Exception shell-ex
+    (let [content (slurp path)
+          creds (json/read-str content :key-fn keyword)]
+      (log/info ::read-adc-credentials :type (:type creds))
+      creds)
+    (catch Exception e
+      (log/warn ::read-adc-credentials :error (.getMessage e))
+      nil)))
+
+(defn get-access-token-from-refresh-token
+  "Exchange a refresh token for an access token using Google's OAuth2 endpoint.
+   Works with 'authorized_user' type credentials from `gcloud auth application-default login`."
+  [{:keys [client_id client_secret refresh_token]}]
+  (log/info ::get-access-token-from-refresh-token :exchanging-refresh-token)
+  (let [response (http/post "https://oauth2.googleapis.com/token"
+                            {:form-params {:client_id     client_id
+                                           :client_secret client_secret
+                                           :refresh_token refresh_token
+                                           :grant_type    "refresh_token"}
+                             :as :json})
+        body (:body response)]
+    (if-let [token (:access_token body)]
+      (do
+        (log/info ::get-access-token-from-refresh-token :success)
+        token)
+      (throw (ex-info "No access_token in response" {:body body})))))
+
+(defn get-access-token-adc
+  "Get access token using Application Default Credentials.
+   Supports 'authorized_user' type credentials.
+   Returns access token string or throws exception."
+  []
+  (if-let [path (get-adc-credentials-path)]
+    (if-let [creds (read-adc-credentials path)]
+      (case (:type creds)
+        "authorized_user"
+        (get-access-token-from-refresh-token creds)
+
+        ;; Service account would require JWT signing - not implemented yet
+        "service_account"
+        (throw (ex-info "Service account ADC not yet supported"
+                        {:type (:type creds)
+                         :hint "Use authorized_user credentials from 'gcloud auth application-default login'"}))
+
+        (throw (ex-info "Unknown ADC credential type"
+                        {:type (:type creds)})))
+      (throw (ex-info "Could not read ADC credentials" {:path path})))
+    (throw (ex-info "No ADC credentials file found"
+                    {:checked ["GOOGLE_APPLICATION_CREDENTIALS env var"
+                               "~/.config/gcloud/application_default_credentials.json"]}))))
+
+(comment
+  ;; Test ADC
+  (get-adc-credentials-path)
+  (read-adc-credentials (get-adc-credentials-path))
+  (get-access-token-adc)
+  0)
+
+;; ============================================================
+;; Token retrieval with ADC support
+;; ============================================================
+
+(defn get-token
+  "Get access token for Google Cloud APIs.
+   Tries in order:
+   1. ADC (Application Default Credentials) - works in Docker with mounted ~/.config/gcloud
+   2. gcloud CLI (shell) - works locally with gcloud installed
+   3. Metadata server (network) - works in GCP compute environments"
+  []
+  (try
+    ;; Try ADC first (best for Docker)
+    (get-access-token-adc)
+    (catch Exception adc-ex
+      (log/debug ::get-token :adc-failed (.getMessage adc-ex))
       (try
-        (get-access-token-gcloud-net)
-        (catch Exception net-ex
-          (throw (ex-info "Failed to get token via shell and network"
-                          {:shell-error (.getMessage shell-ex)
-                           :net-error (.getMessage net-ex)})))))))
+        ;; Try shell (gcloud CLI)
+        (get-auth-token-shell)
+        (catch Exception shell-ex
+          (log/debug ::get-token :shell-failed (.getMessage shell-ex))
+          (try
+            ;; Try metadata server (GCP environments)
+            (get-access-token-gcloud-net)
+            (catch Exception net-ex
+              (throw (ex-info "Failed to get token via all methods (ADC, shell, network)"
+                              {:adc-error   (.getMessage adc-ex)
+                               :shell-error (.getMessage shell-ex)
+                               :net-error   (.getMessage net-ex)})))))))))
 
 (defn get-secret-http!
   "Fetches secret using Google Cloud Secret Manager REST API
@@ -219,8 +331,14 @@
 
    Outside Cloud Run (local/Docker):
      1. Try local file (gcp-secrets/<name>.edn or secrets/<name>.edn)
-     2. Fallback to HTTP/network (works with gcloud auth)
-     3. Fallback to gcloud CLI
+     2. Fallback to Secret Manager API via HTTP, using tokens from:
+        a. ADC (Application Default Credentials) - mount ~/.config/gcloud in Docker
+        b. gcloud CLI - requires gcloud installed
+        c. Metadata server - GCP compute environments only
+     3. Fallback to gcloud CLI directly
+
+   For Docker, mount your gcloud config:
+     docker run -v ~/.config/gcloud:/root/.config/gcloud ...
 
    Returns parsed EDN/JSON payload from secret"
   ([secret-name project-id]

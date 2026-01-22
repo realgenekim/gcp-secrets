@@ -30,11 +30,12 @@
   []
   (some? (System/getenv "K_SERVICE")))
 
-(defn get-secret-local-file
+(defn- get-secret-local-file
   "Read secret from local file. Tries multiple paths:
    1. gcp-secrets/<name>.edn
    2. secrets/<name>.edn
-   Returns parsed EDN or nil if not found."
+   Returns parsed EDN or nil if not found.
+   Private: not used in main fallback chain. Available for explicit opt-in."
   [secret-name]
   (let [paths [(str "gcp-secrets/" secret-name ".edn")
                (str "secrets/" secret-name ".edn")
@@ -274,9 +275,10 @@
                                :shell-error (.getMessage shell-ex)
                                :net-error   (.getMessage net-ex)})))))))))
 
-(defn get-secret-http!
-  "Fetches secret using Google Cloud Secret Manager REST API
-   Returns parsed EDN payload from secret"
+(defn- get-secret-http!
+  "Fetches secret using Google Cloud Secret Manager REST API.
+   Returns parsed EDN payload from secret.
+   Private: use get-secret! instead."
   [secret-name project-id]
   (let [;project-id "booktracker-1208"
         url (format "https://secretmanager.googleapis.com/v1/projects/%s/secrets/%s/versions/latest:access"
@@ -298,9 +300,10 @@
     (log/warn ::get-secret! :secret-name secret-name project-id)
     payload))
 
-(defn get-secret-gcloud!
-  "Fetches secret using gcloud CLI command
-   Returns parsed EDN payload from secret"
+(defn- get-secret-gcloud!
+  "Fetches secret using gcloud CLI command.
+   Returns parsed EDN payload from secret.
+   Private: use get-secret! instead."
   [secret-name]
   (log/info ::get-secret-gcloud! :attempting secret-name :method "gcloud CLI")
   (try
@@ -324,58 +327,39 @@
 (def DEFAULT-PROJECT-ID "booktracker-1208")
 
 (defn get-secret!
-  "Fetches secret with environment-aware fallback methods.
+  "Fetches secret from Google Cloud Secret Manager.
 
-   In Cloud Run (K_SERVICE set):
-     → Use Secret Manager API (has implicit credentials)
-
-   Outside Cloud Run (local/Docker):
-     1. Try local file (gcp-secrets/<name>.edn or secrets/<name>.edn)
-     2. Fallback to Secret Manager API via HTTP, using tokens from:
-        a. ADC (Application Default Credentials) - mount ~/.config/gcloud in Docker
-        b. gcloud CLI - requires gcloud installed
-        c. Metadata server - GCP compute environments only
-     3. Fallback to gcloud CLI directly
+   Token retrieval order (via get-token):
+     1. ADC (Application Default Credentials) - mount ~/.config/gcloud in Docker
+     2. gcloud CLI shell - works locally with gcloud installed
+     3. Metadata server - GCP compute environments (Cloud Run, GCE)
 
    For Docker, mount your gcloud config:
      docker run -v ~/.config/gcloud:/root/.config/gcloud ...
 
-   Returns parsed EDN/JSON payload from secret"
+   Falls back to gcloud CLI 'secrets versions access' if HTTP fails.
+
+   Returns parsed EDN payload from secret."
   ([secret-name project-id]
    (log/info ::get-secret! :attempting secret-name
              :in-cloud-run (running-in-cloud-run?))
-
-   (if (running-in-cloud-run?)
-     ;; In Cloud Run: use Secret Manager directly (has implicit credentials)
-     (do
-       (log/info ::get-secret! :method :secrets-manager :secret-name secret-name)
-       (get-secret-http! secret-name project-id))
-
-     ;; Outside Cloud Run: try local file first, then network methods
-     (if-let [local-secret (get-secret-local-file secret-name)]
-       (do
-         (log/info ::get-secret! :method :local-file :secret-name secret-name)
-         local-secret)
-       ;; No local file, try network methods
-       (do
-         (log/info ::get-secret! :no-local-file secret-name :trying-network)
-         (try
-           (log/info ::get-secret! :trying-method "HTTP/network")
-           (get-secret-http! secret-name project-id)
-           (catch Exception http-ex
-             (log/warn ::get-secret! :http-failed secret-name
-                       :error (.getMessage http-ex))
-             (try
-               (log/info ::get-secret! :trying-method "gcloud CLI fallback")
-               (get-secret-gcloud! secret-name)
-               (catch Exception gcloud-ex
-                 (log/error ::get-secret! :all-methods-failed secret-name
-                            :http-error (.getMessage http-ex)
-                            :gcloud-error (.getMessage gcloud-ex))
-                 (throw (ex-info "Failed to get secret via all methods"
-                                 {:secret-name  secret-name
-                                  :http-error   (.getMessage http-ex)
-                                  :gcloud-error (.getMessage gcloud-ex)}))))))))))
+   (try
+     (log/info ::get-secret! :trying-method "HTTP/Secret Manager API")
+     (get-secret-http! secret-name project-id)
+     (catch Exception http-ex
+       (log/warn ::get-secret! :http-failed secret-name
+                 :error (.getMessage http-ex))
+       (try
+         (log/info ::get-secret! :trying-method "gcloud CLI fallback")
+         (get-secret-gcloud! secret-name)
+         (catch Exception gcloud-ex
+           (log/error ::get-secret! :all-methods-failed secret-name
+                      :http-error (.getMessage http-ex)
+                      :gcloud-error (.getMessage gcloud-ex))
+           (throw (ex-info "Failed to get secret via all methods"
+                           {:secret-name  secret-name
+                            :http-error   (.getMessage http-ex)
+                            :gcloud-error (.getMessage gcloud-ex)})))))))
   ([secret-name]
    (get-secret! secret-name DEFAULT-PROJECT-ID)))
 

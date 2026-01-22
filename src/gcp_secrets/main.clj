@@ -1,13 +1,13 @@
 (ns gcp-secrets.main
   (:require
-    [clojure.edn :as edn]
-    [clojure.java.shell :as shell]
-    [clojure.reflect :as r]
-    [clojure.pprint :as pp]
-    [clojure.data.json :as json]
-    [logging.main :as glog]
-    [hato.client :as http]
-    [taoensso.timbre :as log])
+   [clojure.edn :as edn]
+   [clojure.java.shell :as shell]
+   [clojure.reflect :as r]
+   [clojure.pprint :as pp]
+   [clojure.data.json :as json]
+   [logging.main :as glog]
+   [hato.client :as http]
+   [taoensso.timbre :as log])
   #_(:import (com.google.cloud.secretmanager.v1 Secret
                                                 SecretManagerServiceClient
                                                 ProjectName
@@ -23,6 +23,33 @@
   (let [ret (System/getenv "USE_LOCAL_KEYFILES")]
     (log/warn ::use-local-keys? ret)
     ret))
+
+(defn running-in-cloud-run?
+  "Detect if running in Cloud Run by checking K_SERVICE env var.
+   Returns true if in Cloud Run, false otherwise."
+  []
+  (some? (System/getenv "K_SERVICE")))
+
+(defn get-secret-local-file
+  "Read secret from local file. Tries multiple paths:
+   1. gcp-secrets/<name>.edn
+   2. secrets/<name>.edn
+   Returns parsed EDN or nil if not found."
+  [secret-name]
+  (let [paths [(str "gcp-secrets/" secret-name ".edn")
+               (str "secrets/" secret-name ".edn")
+               (str "gcp-secrets/" secret-name ".json")
+               (str "secrets/" secret-name ".json")]]
+    (some (fn [path]
+            (try
+              (let [content (slurp path)]
+                (log/info ::get-secret-local-file :found path :secret-name secret-name)
+                (if (.endsWith path ".json")
+                  (json/read-str content :key-fn keyword)
+                  (edn/read-string content)))
+              (catch java.io.FileNotFoundException _
+                nil)))
+          paths)))
 
 (comment
   (use-local-keys?)
@@ -73,8 +100,7 @@
   (bean secret)
   (pp/print-table (r/reflect client))
 
-
-  ;(def project (ProjectName/of "booktracker-1208"))
+;(def project (ProjectName/of "booktracker-1208"))
   ;(.accessSecretVersion client "mysql")
 
   ; https://cloud.google.com/secret-manager/docs/samples/secretmanager-access-secret-version#secretmanager_access_secret_version-java
@@ -99,8 +125,8 @@
 
 (defn get-auth-token-shell []
   (-> (clojure.java.shell/sh "gcloud" "auth" "print-access-token")
-    :out
-    clojure.string/trim))
+      :out
+      clojure.string/trim))
 
 (comment
   (get-auth-token-shell)
@@ -109,10 +135,10 @@
 ; https://cloud.google.com/compute/docs/access/authenticate-workloads
 (defn get-access-token-gcloud-net []
   (-> (http/get "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token"
-        {:headers {"Metadata-Flavor" "Google"}})
-    :body
-    (json/read-str :key-fn keyword)
-    :access_token))
+                {:headers {"Metadata-Flavor" "Google"}})
+      :body
+      (json/read-str :key-fn keyword)
+      :access_token))
 
 (comment
   (get-access-token-gcloud-net)
@@ -133,8 +159,8 @@
         (get-access-token-gcloud-net)
         (catch Exception net-ex
           (throw (ex-info "Failed to get token via shell and network"
-                   {:shell-error (.getMessage shell-ex)
-                    :net-error (.getMessage net-ex)})))))))
+                          {:shell-error (.getMessage shell-ex)
+                           :net-error (.getMessage net-ex)})))))))
 
 (defn get-secret-http!
   "Fetches secret using Google Cloud Secret Manager REST API
@@ -142,22 +168,22 @@
   [secret-name project-id]
   (let [;project-id "booktracker-1208"
         url (format "https://secretmanager.googleapis.com/v1/projects/%s/secrets/%s/versions/latest:access"
-              project-id
-              secret-name)
+                    project-id
+                    secret-name)
         token (get-token)
         response (http/get url
-                   {:headers {"Authorization" (str "Bearer " token)}
-                    :as :json})
+                           {:headers {"Authorization" (str "Bearer " token)}
+                            :as :json})
         body-parsed (if (map? (:body response))
                       (:body response)
                       (json/read-str (:body response) :key-fn keyword))
         payload (-> body-parsed
-                  :payload
-                  :data
-                  base64-decode
-                  (String. "UTF-8")
-                  edn/read-string)]
-    (log/warn ::get-secret! :secret-name secret-name)
+                    :payload
+                    :data
+                    base64-decode
+                    (String. "UTF-8")
+                    edn/read-string)]
+    (log/warn ::get-secret! :secret-name secret-name project-id)
     payload))
 
 (defn get-secret-gcloud!
@@ -166,52 +192,74 @@
   [secret-name]
   (log/info ::get-secret-gcloud! :attempting secret-name :method "gcloud CLI")
   (try
-    (let [result (shell/sh "gcloud" "secrets" "versions" "access" "latest" 
-                          (str "--secret=" secret-name))
+    (let [result (shell/sh "gcloud" "secrets" "versions" "access" "latest"
+                           (str "--secret=" secret-name))
           {:keys [exit out err]} result]
       (if (zero? exit)
         (do
           (log/info ::get-secret-gcloud! :success secret-name :method "gcloud CLI")
           (edn/read-string out))
         (do
-          (log/error ::get-secret-gcloud! :failed secret-name 
+          (log/error ::get-secret-gcloud! :failed secret-name
                      :method "gcloud CLI" :exit exit :error err)
-          (throw (ex-info "gcloud command failed" 
-                   {:exit exit :error err :secret-name secret-name})))))
+          (throw (ex-info "gcloud command failed"
+                          {:exit exit :error err :secret-name secret-name})))))
     (catch Exception e
-      (log/error ::get-secret-gcloud! :exception secret-name 
+      (log/error ::get-secret-gcloud! :exception secret-name
                  :method "gcloud CLI" :error (.getMessage e))
       (throw e))))
 
 (def DEFAULT-PROJECT-ID "booktracker-1208")
 
 (defn get-secret!
-  "Fetches secret with multiple fallback methods
-   1. Try HTTP/network method
-   2. Fallback to gcloud CLI
-   Returns parsed EDN payload from secret"
+  "Fetches secret with environment-aware fallback methods.
+
+   In Cloud Run (K_SERVICE set):
+     → Use Secret Manager API (has implicit credentials)
+
+   Outside Cloud Run (local/Docker):
+     1. Try local file (gcp-secrets/<name>.edn or secrets/<name>.edn)
+     2. Fallback to HTTP/network (works with gcloud auth)
+     3. Fallback to gcloud CLI
+
+   Returns parsed EDN/JSON payload from secret"
   ([secret-name project-id]
-   (log/info ::get-secret! :attempting secret-name project-id)
-   (try
-     (log/info ::get-secret! :trying-method "HTTP/network")
-     (get-secret-http! secret-name project-id)
-     (catch Exception http-ex
-       (log/warn ::get-secret! :http-failed secret-name
-         :error (.getMessage http-ex))
-       (try
-         (log/info ::get-secret! :trying-method "gcloud CLI fallback")
-         (get-secret-gcloud! secret-name)
-         (catch Exception gcloud-ex
-           (log/error ::get-secret! :all-methods-failed secret-name
-             :http-error (.getMessage http-ex)
-             :gcloud-error (.getMessage gcloud-ex))
-           (throw (ex-info "Failed to get secret via all methods"
-                    {:secret-name  secret-name
-                     :http-error   (.getMessage http-ex)
-                     :gcloud-error (.getMessage gcloud-ex)})))))))
+   (log/info ::get-secret! :attempting secret-name
+             :in-cloud-run (running-in-cloud-run?))
+
+   (if (running-in-cloud-run?)
+     ;; In Cloud Run: use Secret Manager directly (has implicit credentials)
+     (do
+       (log/info ::get-secret! :method :secrets-manager :secret-name secret-name)
+       (get-secret-http! secret-name project-id))
+
+     ;; Outside Cloud Run: try local file first, then network methods
+     (if-let [local-secret (get-secret-local-file secret-name)]
+       (do
+         (log/info ::get-secret! :method :local-file :secret-name secret-name)
+         local-secret)
+       ;; No local file, try network methods
+       (do
+         (log/info ::get-secret! :no-local-file secret-name :trying-network)
+         (try
+           (log/info ::get-secret! :trying-method "HTTP/network")
+           (get-secret-http! secret-name project-id)
+           (catch Exception http-ex
+             (log/warn ::get-secret! :http-failed secret-name
+                       :error (.getMessage http-ex))
+             (try
+               (log/info ::get-secret! :trying-method "gcloud CLI fallback")
+               (get-secret-gcloud! secret-name)
+               (catch Exception gcloud-ex
+                 (log/error ::get-secret! :all-methods-failed secret-name
+                            :http-error (.getMessage http-ex)
+                            :gcloud-error (.getMessage gcloud-ex))
+                 (throw (ex-info "Failed to get secret via all methods"
+                                 {:secret-name  secret-name
+                                  :http-error   (.getMessage http-ex)
+                                  :gcloud-error (.getMessage gcloud-ex)}))))))))))
   ([secret-name]
    (get-secret! secret-name DEFAULT-PROJECT-ID)))
-
 
 (comment
   (get-token)
@@ -221,13 +269,12 @@
   ;; Test the new gcloud function
   (get-secret-gcloud! "mysql")
   (get-secret-gcloud! "reddit")
-  
+
   ;; Test the fallback chain
   (get-secret! "mysql")
   (get-secret! "rainforest")
   (get-secret! "mysql-booktracker")
   (get-secret! "podcaster" "podcaster")
   (get-secret! "podcaster" "podcaster-468303")
-
 
   0)

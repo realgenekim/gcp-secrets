@@ -16,8 +16,12 @@ Clojure library for accessing Google Cloud Secret Manager with multiple authenti
 
 ## Authentication / Token Retrieval Order
 
-`get-secret!` fetches secrets via the Secret Manager REST API. To authenticate,
-it tries these methods in order:
+`get-secret!` fetches secrets via the Secret Manager REST API. To call that API, it needs an auth token. There are two layers happening:
+
+- **Layer 1 — Authenticate to GCP**: Get an OAuth2 token that proves "I am this service account"
+- **Layer 2 — Fetch the secret**: Use that token to call `https://secretmanager.googleapis.com/v1/projects/.../secrets/.../versions/latest:access`
+
+For Layer 1, it tries these methods in order:
 
 1. **ADC (Application Default Credentials)** — Reads `~/.config/gcloud/application_default_credentials.json`
    (or path in `GOOGLE_APPLICATION_CREDENTIALS` env var) and exchanges the refresh token for an access token.
@@ -26,11 +30,15 @@ it tries these methods in order:
 2. **gcloud CLI (shell)** — Runs `gcloud auth print-access-token`. Works locally when gcloud is installed.
 
 3. **Metadata server** — Fetches token from `http://metadata.google.internal/...`.
-   Works in GCP compute environments (Cloud Run, GCE, etc.)
+   Works in GCP compute environments (Cloud Run, GCE, etc.). Returns a token in ~1ms.
 
 If the HTTP/API approach fails entirely, falls back to:
 
-4. **gcloud CLI `secrets versions access`** — Directly fetches the secret value via gcloud command.
+4. **gcloud CLI `secrets versions access`** — Directly fetches the secret value via gcloud command (bypasses both layers).
+
+**On Cloud Run, both layers are automatic.** The metadata server provides the token (#3), and the service account just needs the `roles/secretmanager.secretAccessor` IAM role. No env vars, no mounted files, no config.
+
+**Locally**, it typically uses #2 (gcloud CLI) — whatever identity you're logged in as via `gcloud auth login`.
 
 ## When to Use gcp-secrets (and When NOT To)
 

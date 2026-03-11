@@ -287,12 +287,15 @@
         response (http/get url
                            {:headers {"Authorization" (str "Bearer " token)}})
         body-parsed (json/read-str (:body response) :key-fn keyword)
-        payload (-> body-parsed
+        raw-str (-> body-parsed
                     :payload
                     :data
                     base64-decode
-                    (String. "UTF-8")
-                    edn/read-string)]
+                    (String. "UTF-8"))
+        ;; Try EDN parsing for structured secrets (maps, vectors, etc.)
+        ;; Fall back to raw string for plain-text secrets (passwords, API keys)
+        payload (let [parsed (try (edn/read-string raw-str) (catch Exception _ nil))]
+                  (if (coll? parsed) parsed raw-str))]
     (log/warn ::get-secret! :secret-name secret-name project-id)
     payload))
 
@@ -309,7 +312,8 @@
       (if (zero? exit)
         (do
           (log/info ::get-secret-gcloud! :success secret-name :method "gcloud CLI")
-          (edn/read-string out))
+          (let [parsed (try (edn/read-string out) (catch Exception _ nil))]
+            (if (coll? parsed) parsed (clojure.string/trim out))))
         (do
           (log/error ::get-secret-gcloud! :failed secret-name
                      :method "gcloud CLI" :exit exit :error err)

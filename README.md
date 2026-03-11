@@ -32,6 +32,80 @@ If the HTTP/API approach fails entirely, falls back to:
 
 4. **gcloud CLI `secrets versions access`** — Directly fetches the secret value via gcloud command.
 
+## When to Use gcp-secrets (and When NOT To)
+
+gcp-secrets is for fetching **application secrets** (passwords, API keys, DB credentials) from Google Secret Manager. It is NOT needed for authenticating to GCP APIs like GCS, BigQuery, or Pub/Sub — those use ADC automatically.
+
+| Need | Use gcp-secrets? | Instead use |
+|------|-------------------|-------------|
+| Dashboard password | Yes | `(gcpsec/get-secret! "my-password" "my-project")` |
+| DB username/password | Yes | `(gcpsec/get-secret! "postgres" "my-project")` |
+| Third-party API keys | Yes | `(gcpsec/get-secret! "stripe-key" "my-project")` |
+| GCS bucket access | No | ADC — just `(storage/init {:project-id "..."})` |
+| BigQuery access | No | ADC handles it automatically |
+| Google Sheets access | No — use SA key file | Mount via `--set-secrets` + `GOOGLE_APPLICATION_CREDENTIALS` |
+
+### The key insight
+
+On Cloud Run, gcp-secrets works with **zero configuration**. Cloud Run's metadata server provides the auth token to call Secret Manager. No env vars, no mounted files, no `--set-secrets` needed in your deploy command.
+
+```clojure
+;; This just works on Cloud Run — no setup needed
+(def dashboard-pass
+  (try (gcpsec/get-secret! "sched-dashboard-pass" "does2020")
+       (catch Exception _ nil)))
+```
+
+This is cleaner than the `--set-secrets` / `--set-env-vars` approach because the secret never appears in deploy commands, Makefiles, or environment variable listings.
+
+## Common Patterns
+
+### Pattern 1: Simple secret at startup (dashboard passwords, API keys)
+
+```clojure
+;; Load once at namespace load time. On Cloud Run, ADC handles auth.
+;; Locally, falls back to gcloud CLI.
+(def dashboard-pass
+  (try (gcpsec/get-secret! "sched-dashboard-pass" "does2020")
+       (catch Exception _ nil)))
+```
+
+### Pattern 2: Lazy loading with delay (secrets that might not be needed)
+
+```clojure
+;; From reddit-scraper/reddit_api.clj
+;; Defers Secret Manager call until first use
+(def secrets-delay
+  (delay
+    (if (gcpsec/use-local-keys?)
+      (read-string (slurp "secrets/reddit-secrets.edn"))
+      (gcpsec/get-secret! "reddit"))))
+
+(defn get-client [] (init-client @secrets-delay))
+```
+
+### Pattern 3: Async loading with future (always-needed secrets, faster startup)
+
+```clojure
+;; From reddit-scraper/mongodb.clj
+;; Starts loading immediately on background thread
+(defonce config-future
+  (future
+    (if (gcpsec/use-local-keys?)
+      (read-string (slurp "secrets/mongodb-secrets.edn"))
+      (gcpsec/get-secret! "mongodb"))))
+
+(defn get-uri [] (:uri @config-future))
+```
+
+### When to use which
+
+| Situation | Pattern | Why |
+|-----------|---------|-----|
+| Password/key, always needed, fast | Direct `def` | Simplest, ~200-500ms at startup |
+| Secret might not be used | `delay` | Don't pay for what you don't use |
+| Always needed, slow startup matters | `future` | Loads in background, doesn't block |
+
 ## Docker Usage
 
 Mount your local gcloud credentials into the container:

@@ -205,9 +205,8 @@
                             {:form-params {:client_id     client_id
                                            :client_secret client_secret
                                            :refresh_token refresh_token
-                                           :grant_type    "refresh_token"}
-                             :as :json})
-        body (:body response)]
+                                           :grant_type    "refresh_token"}})
+        body (json/read-str (:body response) :key-fn keyword)]
     (if-let [token (:access_token body)]
       (do
         (log/info ::get-access-token-from-refresh-token :success)
@@ -286,11 +285,8 @@
                     secret-name)
         token (get-token)
         response (http/get url
-                           {:headers {"Authorization" (str "Bearer " token)}
-                            :as :json})
-        body-parsed (if (map? (:body response))
-                      (:body response)
-                      (json/read-str (:body response) :key-fn keyword))
+                           {:headers {"Authorization" (str "Bearer " token)}})
+        body-parsed (json/read-str (:body response) :key-fn keyword)
         payload (-> body-parsed
                     :payload
                     :data

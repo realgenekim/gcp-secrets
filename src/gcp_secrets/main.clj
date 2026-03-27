@@ -201,6 +201,9 @@
    Works with 'authorized_user' type credentials from `gcloud auth application-default login`."
   [{:keys [client_id client_secret refresh_token]}]
   (log/info ::get-access-token-from-refresh-token :exchanging-refresh-token)
+  ;; NOTE: do NOT use :as :json — causes NPE in AOT+distroless containers.
+  ;; hato's :as :json coercion has a null fn ref after AOT compilation.
+  ;; Parse JSON manually with data.json instead.
   (let [response (http/post "https://oauth2.googleapis.com/token"
                             {:form-params {:client_id     client_id
                                            :client_secret client_secret
@@ -279,11 +282,13 @@
    Returns parsed EDN payload from secret.
    Private: use get-secret! instead."
   [secret-name project-id]
-  (let [;project-id "booktracker-1208"
-        url (format "https://secretmanager.googleapis.com/v1/projects/%s/secrets/%s/versions/latest:access"
+  (let [url (format "https://secretmanager.googleapis.com/v1/projects/%s/secrets/%s/versions/latest:access"
                     project-id
                     secret-name)
         token (get-token)
+        ;; NOTE: do NOT use :as :json — causes NPE in AOT+distroless containers.
+        ;; hato's :as :json coercion has a null fn ref after AOT compilation.
+        ;; Parse JSON manually with data.json instead.
         response (http/get url
                            {:headers {"Authorization" (str "Bearer " token)}})
         body-parsed (json/read-str (:body response) :key-fn keyword)

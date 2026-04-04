@@ -169,3 +169,73 @@
       (is (thrown-with-msg? clojure.lang.ExceptionInfo
                             #"Failed to get secret"
                             (gcpsec/get-secret! "test" "proj"))))))
+
+;; ============================================================
+;; Tests: URL construction and project ID
+;; ============================================================
+
+(deftest secret-request-uses-correct-project-id
+  (testing "API call URL contains the project-id passed by caller"
+    (let [captured-url (atom nil)]
+      (with-redefs [http/get (fn [url & [opts]]
+                               (when (.contains url "secretmanager")
+                                 (reset! captured-url url))
+                               (cond
+                                 (.contains url "metadata.google.internal")
+                                 {:status 200 :body (fake-token-response)}
+
+                                 (.contains url "secretmanager")
+                                 {:status 200 :body (fake-secret-manager-response
+                                                     (pr-str {:ok true}))}))
+                    gcp-secrets.main/get-adc-credentials-path (constantly nil)]
+        (gcpsec/get-secret! "my-secret" "does2020")
+        (is (clojure.string/includes? @captured-url "projects/does2020/"))
+        (is (clojure.string/includes? @captured-url "secrets/my-secret/"))))))
+
+(deftest wrong-project-id-visible-in-url
+  (testing "If caller passes wrong project, URL shows it (would have caught our bug)"
+    (let [captured-url (atom nil)]
+      (with-redefs [http/get (fn [url & [opts]]
+                               (when (.contains url "secretmanager")
+                                 (reset! captured-url url))
+                               (cond
+                                 (.contains url "metadata.google.internal")
+                                 {:status 200 :body (fake-token-response)}
+
+                                 (.contains url "secretmanager")
+                                 {:status 200 :body (fake-secret-manager-response
+                                                     (pr-str {:ok true}))}))
+                    gcp-secrets.main/get-adc-credentials-path (constantly nil)]
+        (gcpsec/get-secret! "my-secret" "itrev-video-library-backups")
+        ;; This URL would 403 in real life — wrong project!
+        (is (clojure.string/includes? @captured-url "itrev-video-library-backups"))
+        (is (not (clojure.string/includes? @captured-url "does2020")))))))
+
+;; ============================================================
+;; Tests: 403 error includes project-id and URL
+;; ============================================================
+
+(deftest error-on-403-includes-project-id-and-url
+  (testing "403 error ex-data includes project-id, secret-name, and URL"
+    (with-redefs [http/get (fn [url & [opts]]
+                             (cond
+                               (.contains url "metadata.google.internal")
+                               {:status 200 :body (fake-token-response)}
+
+                               (.contains url "secretmanager")
+                               {:status 403
+                                :body "{\"error\":{\"message\":\"Permission denied\"}}"}))
+                  ;; ADC not available in this test
+                  gcp-secrets.main/get-adc-credentials-path (constantly nil)
+                  ;; gcloud fallback also fails
+                  clojure.java.shell/sh (fn [& _] {:exit 1 :out "" :err "not found"})]
+      (try
+        (gcpsec/get-secret! "my-secret" "wrong-project")
+        (is false "Should have thrown")
+        (catch clojure.lang.ExceptionInfo e
+          (is (clojure.string/includes? (.getMessage e) "wrong-project")
+              "Error message must include project-id")
+          (is (clojure.string/includes? (.getMessage e) "my-secret")
+              "Error message must include secret-name")
+          (is (= "wrong-project" (:project-id (ex-data e))))
+          (is (= "my-secret" (:secret-name (ex-data e)))))))))

@@ -355,23 +355,25 @@
 
    Returns parsed EDN payload from secret."
   ([secret-name project-id]
-   (log/info ::get-secret! :attempting secret-name
+   (log/info ::get-secret! :attempting secret-name :project-id project-id
              :in-cloud-run (running-in-cloud-run?))
    (try
      (log/info ::get-secret! :trying-method "HTTP/Secret Manager API")
      (get-secret-http! secret-name project-id)
      (catch Exception http-ex
-       (log/warn ::get-secret! :http-failed secret-name
+       (log/warn ::get-secret! :http-failed secret-name :project-id project-id
                  :error (.getMessage http-ex))
        (try
          (log/info ::get-secret! :trying-method "gcloud CLI fallback")
          (get-secret-gcloud! secret-name)
          (catch Exception gcloud-ex
-           (log/error ::get-secret! :all-methods-failed secret-name
+           (log/error ::get-secret! :all-methods-failed secret-name :project-id project-id
                       :http-error (.getMessage http-ex)
                       :gcloud-error (.getMessage gcloud-ex))
-           (throw (ex-info "Failed to get secret via all methods"
+           (throw (ex-info (str "Failed to get secret " secret-name
+                                " in project " project-id " via all methods")
                            {:secret-name  secret-name
+                            :project-id   project-id
                             :http-error   (.getMessage http-ex)
                             :gcloud-error (.getMessage gcloud-ex)})))))))
   ([secret-name]

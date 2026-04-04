@@ -1,5 +1,9 @@
 # Makefile for gcp-secrets library
 
+# Run tests once with fail-fast
+runtests-once:
+	clojure -X:test
+
 # Get the current git commit hash for use in deps.edn
 gethash:
 	@echo "Current git commit hash:"
@@ -20,4 +24,4 @@ copy-hash:
 	@echo "Git hash copied to clipboard:"
 	@git rev-parse HEAD
 
-.PHONY: gethash get-short-hash copy-hash
+.PHONY: runtests-once gethash get-short-hash copy-hash

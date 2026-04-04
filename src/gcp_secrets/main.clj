@@ -285,12 +285,22 @@
   (let [url (format "https://secretmanager.googleapis.com/v1/projects/%s/secrets/%s/versions/latest:access"
                     project-id
                     secret-name)
+        _ (log/warn ::get-secret-http! :project-id project-id :secret-name secret-name :url url)
         token (get-token)
         ;; NOTE: do NOT use :as :json — causes NPE in AOT+distroless containers.
         ;; hato's :as :json coercion has a null fn ref after AOT compilation.
         ;; Parse JSON manually with data.json instead.
         response (http/get url
-                           {:headers {"Authorization" (str "Bearer " token)}})
+                           {:headers {"Authorization" (str "Bearer " token)}
+                            :throw-exceptions false})
+        _ (when (not= 200 (:status response))
+            (log/error ::get-secret-http! :status (:status response)
+                       :project-id project-id :secret-name secret-name :url url
+                       :body (subs (str (:body response)) 0 (min 500 (count (str (:body response))))))
+            (throw (ex-info (str "Secret Manager " (:status response)
+                                 " for " secret-name " in project " project-id)
+                            {:status (:status response) :project-id project-id
+                             :secret-name secret-name :url url})))
         body-parsed (json/read-str (:body response) :key-fn keyword)
         raw-str (-> body-parsed
                     :payload
@@ -301,7 +311,6 @@
         ;; Fall back to raw string for plain-text secrets (passwords, API keys)
         payload (let [parsed (try (edn/read-string raw-str) (catch Exception _ nil))]
                   (if (coll? parsed) parsed raw-str))]
-    (log/warn ::get-secret! :secret-name secret-name project-id)
     payload))
 
 (defn- get-secret-gcloud!

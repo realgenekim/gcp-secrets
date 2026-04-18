@@ -25,10 +25,12 @@
     ret))
 
 (defn running-in-cloud-run?
-  "Detect if running in Cloud Run by checking K_SERVICE env var.
-   Returns true if in Cloud Run, false otherwise."
+  "Detect if running in Cloud Run (Service or Job).
+   Cloud Run Services set K_SERVICE, Jobs set CLOUD_RUN_JOB.
+   Returns true if in either, false otherwise."
   []
-  (some? (System/getenv "K_SERVICE")))
+  (or (some? (System/getenv "K_SERVICE"))
+      (some? (System/getenv "CLOUD_RUN_JOB"))))
 
 (defn- get-secret-local-file
   "Read secret from local file. Tries multiple paths:
